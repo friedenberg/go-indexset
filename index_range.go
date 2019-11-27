@@ -22,6 +22,10 @@ const (
 	comparisonOverlapRightOutside
 )
 
+var (
+	indexRangeZero = indexRange{0, 0, 0}
+)
+
 type comparisonPosition int
 type comparisonOverlap int
 
@@ -51,6 +55,23 @@ func MakeRange(left int64, right int64, weight int64) (*indexRange, error) {
 	}
 
 	return &val, nil
+}
+
+func MakeRanges(ranges ...[3]int64) ([]indexRange, error) {
+	output := make([]indexRange, len(ranges))
+
+	for i, someRange := range ranges {
+		validatedRange, err := MakeRange(someRange[0], someRange[1], someRange[2])
+
+		if err != nil {
+			//always return a valid output range
+			return output, err
+		}
+
+		output[i] = *validatedRange
+	}
+
+	return output, nil
 }
 
 func (a indexRange) comparePosition(b indexRange) comparisonPosition {
@@ -164,4 +185,74 @@ func (a indexRange) compare(b indexRange) indexRangeOverlap {
 		overlap:         overlap,
 		rightIsNewRange: rightIsNewRange,
 	}
+}
+
+func (a indexRange) combine(b indexRange) (replacement []indexRange, carryover indexRange, err error) {
+	comparison := a.compare(b)
+
+	a = comparison.primary
+	b = comparison.secondary
+
+	switch comparison.overlap {
+	case comparisonOverlapEqual:
+		replacement, err = MakeRanges([3]int64{a.left, a.right, a.weight + b.weight})
+
+	case comparisonOverlapLeftInside:
+		replacement, err = MakeRanges(
+			[3]int64{a.left, b.right, a.weight + b.weight},
+			[3]int64{b.right + 1, a.right, a.weight},
+		)
+
+		if comparison.rightIsNewRange {
+			carryover = replacement[1]
+			replacement = replacement[0:1]
+		}
+
+	case comparisonOverlapInside:
+		replacement, err = MakeRanges(
+			[3]int64{a.left, b.left - 1, a.weight},
+			[3]int64{b.left, b.right, a.weight + b.weight},
+			[3]int64{b.right + 1, a.right, a.weight},
+		)
+
+		if comparison.rightIsNewRange {
+			carryover = replacement[2]
+			replacement = replacement[0:2]
+		}
+
+	case comparisonOverlapRightInside:
+		replacement, err = MakeRanges(
+			[3]int64{a.left, b.left - 1, a.weight},
+			[3]int64{b.left, b.right, a.weight + b.weight},
+		)
+
+	case comparisonOverlapRightOutside:
+		rightRange := [3]int64{a.right, b.right, b.weight}
+
+		if comparison.rightIsNewRange {
+			replacement, err = MakeRanges(
+				[3]int64{a.left, b.left - 1, a.weight},
+				[3]int64{b.left, a.right, a.weight + b.weight},
+				rightRange,
+			)
+
+			carryover = replacement[2]
+			replacement = replacement[0:2]
+		} else {
+			replacement, err = MakeRanges(
+				[3]int64{a.left, b.left - 1, a.weight},
+				[3]int64{b.left, a.right, a.weight + b.weight},
+				rightRange,
+			)
+		}
+
+	default:
+		err = fmt.Errorf("failed to combine nodes unknown overlap")
+	}
+
+	if err != nil {
+		return nil, indexRangeZero, err
+	}
+
+	return replacement, carryover, nil
 }

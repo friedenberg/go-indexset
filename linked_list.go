@@ -11,8 +11,8 @@ type node struct {
 	next       *node
 }
 
-type linkedList struct {
-	head *node
+func (n *node) IndexRange() indexRange {
+	return n.indexRange
 }
 
 func (n *node) setPrev(prev *node) error {
@@ -187,25 +187,93 @@ func (n *node) combine(b indexRange) (tail *node, newRange *indexRange, err erro
 	return tail, newRange, nil
 }
 
-func (q *linkedList) Add(newRange indexRange) error {
+type linkedList struct {
+	head *node
+}
+
+func (l *linkedList) FindOverlapping(overlap indexRange) []Member {
+	overlapping := make([]Member, 0)
+
+	l.Do(
+		func(m Member) bool {
+			switch m.IndexRange().comparePosition(overlap) {
+			case comparisonPositionOverlap:
+				overlapping = append(overlapping, m)
+			}
+
+			return false
+		},
+	)
+
+	return overlapping
+}
+
+func (l *linkedList) Replace(original Member, replacements ...indexRange) error {
+	n, ok := original.(*node)
+
+	if !ok {
+		return errors.New("member is not an instance of node")
+	}
+
+	switch len(replacements) {
+	case 0:
+		if n == l.head {
+			l.head = n.next
+			l.head.prev = nil
+		} else if n.next != nil {
+			prev := n.prev
+			next := n.next
+			prev.next = next
+			next.prev = prev
+			n.next = nil
+			n.prev = nil
+		} else {
+			n.prev.next = nil
+			n.prev = nil
+		}
+
+	case 1:
+		n.indexRange = replacements[0]
+
+	default:
+		n.indexRange = replacements[0]
+		next := n.next
+
+		current := n
+
+		for _, v := range replacements[1:] {
+			newNode := &node{
+				indexRange: v,
+				prev:       current,
+			}
+
+			current.next = newNode
+			current = newNode
+		}
+
+		current.next = next
+
+		if next != nil {
+			next.prev = current
+		}
+	}
+
+	return nil
+}
+
+func (q *linkedList) AddOrFindOverlapping(newRange indexRange) (overlapping []Member, err error) {
 	if q.head == nil {
 		q.head = &node{
 			indexRange: newRange,
 		}
 
-		return nil
+		return nil, nil
 	}
 
 	currentNode := q.head
-	previousNode := currentNode
-	previousComparePosition := comparisonPositionRight
-
-	count := 0
 
 	//finding overlapping index ranges
 	for {
-		count += 1
-
 		if currentNode == nil {
 			break
 		}
@@ -214,100 +282,43 @@ func (q *linkedList) Add(newRange indexRange) error {
 
 		switch position {
 		case comparisonPositionLeft:
-			switch previousComparePosition {
-			case comparisonPositionOverlap:
-				//noop because the previous node overlaps newRange, it'll take care of combining
-				//with newRange
+			if len(overlapping) == 0 {
+				next := currentNode.next
 
-			case comparisonPositionRight:
-				//this node has no overlap with our current set, so we can add it
-				//immediately and stop iterating.
-				//todo confirm this works with the start of previous head
 				newNode := &node{
 					indexRange: newRange,
-					next:       currentNode,
+					prev:       currentNode,
+					next:       next,
 				}
 
-				if previousNode == currentNode {
-					q.head = newNode
-				} else {
-					previousNode.setNext(newNode)
-					newNode.setPrev(previousNode)
-					currentNode.setPrev(newNode)
+				if next != nil {
+					next.prev = newNode
 				}
 
-				return nil
-
-			default:
-				//todo more detail
-				return errors.New("impossible state")
+				currentNode.next = newNode
 			}
+
+			break
 
 		case comparisonPositionOverlap:
-			switch previousComparePosition {
-			case comparisonPositionOverlap:
-				//todo make this an impossible state
-				//we're continuing an existing overlap chain
-
-			case comparisonPositionRight:
-				//we're starting a brand new overlap chain
-				nextNode := currentNode.next
-				newTail, modifiedNewRange, err := currentNode.combine(newRange)
-
-				if err != nil {
-					return nil
-				}
-
-				currentNode = newTail
-
-				if nextNode != nil {
-					newTail.setNext(nextNode)
-					nextNode.setPrev(newTail)
-				}
-
-				if modifiedNewRange != nil {
-					newRange = *modifiedNewRange
-				} else {
-					return nil
-				}
-
-			default:
-				//todo more detail
-				return errors.New("impossible state")
-			}
+			overlapping = append(overlapping, currentNode)
 
 		case comparisonPositionRight:
-			switch previousComparePosition {
-			case comparisonPositionRight:
-				//peek at the next node to see if we're at the end. If we are, we
-				//perform what the next node would have and stop
-				nextNode := currentNode.next
-				if nextNode == nil {
-					newNode := &node{
-						indexRange: newRange,
-						prev:       currentNode,
-					}
-					currentNode.setNext(newNode)
-					return nil
-				}
-
-			default:
-				//todo more detail
-				return errors.New("impossible state")
-			}
+			//noop
 
 		default:
 			//todo more detail
-			return errors.New("impossible state")
+			err = errors.New("impossible state")
+			break
 		}
 
 		currentNode = currentNode.next
 	}
 
-	return nil
+	return overlapping, err
 }
 
-func (i *linkedList) Do(f func(indexRange)) {
+func (i *linkedList) Do(f func(Member) (stop bool)) {
 	currentNode := i.head
 	var prevNode *node
 
@@ -320,7 +331,11 @@ func (i *linkedList) Do(f func(indexRange)) {
 			panic(fmt.Errorf("ranges out of order: prev (%s), current(%s)", prevNode.indexRange, currentNode.indexRange))
 		}
 
-		f(currentNode.indexRange)
+		stop := f(currentNode)
+
+		if stop {
+			break
+		}
 
 		prevNode = currentNode
 		currentNode = currentNode.next
