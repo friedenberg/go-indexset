@@ -127,7 +127,7 @@ func TestCombine(t *testing.T) {
 					assert.Nil(t, err)
 				}
 
-				actualReplacements, actualCarryover, err := a.combine(*b)
+				actualReplacements, actualCarryover, err := a.SplitWith(*b)
 				assert.Nil(t, err)
 				assert.Equal(t, replacements, actualReplacements)
 				assert.Equal(t, testcase.carryover, actualCarryover)

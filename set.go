@@ -56,7 +56,7 @@ func (s *Set) Add(newRange indexRange) error {
 		currentRange := currentNode.IndexRange()
 
 		var replacements []indexRange
-		replacements, carryover, err = currentRange.combine(carryover)
+		replacements, carryover, err = currentRange.SplitWith(carryover)
 
 		if err != nil {
 			return err
